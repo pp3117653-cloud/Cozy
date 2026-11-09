@@ -1,0 +1,66 @@
+name: Cozy agent team
+
+on:
+  repository_dispatch:
+    types: [cozy_task]
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: Task prompt
+        required: true
+        type: string
+      mode:
+        description: Pipeline mode
+        required: true
+        default: full_team
+        type: choice
+        options: [full_team, code_only, notify_only]
+      connectors:
+        description: Comma-separated connectors
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cozy-agent-team
+  cancel-in-progress: false
+
+jobs:
+  run-agents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Run Cozy orchestrator
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_TO_NUMBER: ${{ secrets.WHATSAPP_TO_NUMBER }}
+          GOOGLE_SHEETS_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEETS_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            PROMPT='${{ github.event.client_payload.prompt }}'
+            MODE='${{ github.event.client_payload.mode || 'full_team' }}'
+            CONNECTORS='${{ join(github.event.client_payload.connectors, ',') }}'
+          else
+            PROMPT='${{ inputs.prompt }}'
+            MODE='${{ inputs.mode }}'
+            CONNECTORS='${{ inputs.connectors }}'
+          fi
+          python3 orchestrator.py --prompt "$PROMPT" --mode "$MODE" --connectors "$CONNECTORS"
+      - name: Commit state and report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add workspace_state.json logs/
+          git diff --cached --quiet || git commit -m "chore: record Cozy task execution"
+          git push
